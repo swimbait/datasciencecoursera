@@ -1,0 +1,20 @@
+---
+title: "somemap"
+author: "swimbait"
+date: "10/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## October 21, 2020
+
+
+```{r, echo=FALSE}
+library(leaflet)
+my_map<-my_map %>%
+  addMarkers(lat=43.596991, lng=-116.289524,popup="Something")
+my_map
+```
