@@ -1,7 +1,0 @@
-## October 21, 2020
-
-library(leaflet)
-my_map<-my_map %>%
-  addMarkers(lat=43.596991, lng=-116.289524,popup="Something")
-my_map
-
