@@ -1,0 +1,144 @@
+---
+title: "rcap_mile"
+author: "swimbait"
+date: "2/2/2021"
+output: html_document
+---
+
+## Welcome to the capstone course milestone assignment
+
+This is a milestone report, intended to demonstrate that the student of the course is able to get, read, and perform basic processing on the capstone project. The question to solve of the overall capstone project is to data mine raw text files and create predictive models to make inferences based on those models.
+
+The following setup establishes the library, working directory, and the function used to process the text files. It is presented for visibility into the processes used for the milestone report.
+
+```{r setup, include=TRUE}
+knitr::opts_knit$set(root.dir = "C:/final/en_US")
+library(tm)
+TextProcess<- function(x){
+  z<-Corpus(VectorSource(x))
+  z<-tm_map(z, content_transformer(function(x) gsub("(f|ht)tp(s?)://(.*)[.][a-z]+"," ", x)))
+  z<-tm_map(z, content_transformer(function(x) gsub("@[^\\s]+"," ", x)))
+  z<-tm_map(z, content_transformer(function(x) gsub("’","", x)))
+  z<-tm_map(z, content_transformer(function(x) gsub("‘","", x)))
+  z<-tm_map(z, content_transformer(function(x) gsub("–","", x)))
+  z<-tm_map(z, content_transformer(tolower))
+  z<-tm_map(z, removeWords,stopwords("english"))
+  z<-tm_map(z, removePunctuation)
+  z<-tm_map(z, removeNumbers)
+  z<-tm_map(z, stripWhitespace)
+  z<-tm_map(z, PlainTextDocument)
+  workingr<-sapply(1:length(x), function(y) strsplit(as.character(z[[y]][[1]])," "))[[1]]
+  workingr<-workingr[workingr!=""]
+}
+lagMatrix<-function(laginputVector,lagColCount){
+  workingVector<-c(rep(NA,lagColCount-1),laginputVector)
+  lagm<-embed(workingVector,lagColCount)
+  lagm<-lagm[,ncol(lagm):1]
+  if(length(lagm)>lagColCount^2){
+    NArem<-apply(lagm,1,FUN=function(x) sum(is.na(x)))
+    lagm<-lagm[which(NArem==0),]
+    lagm<-apply(lagm,1,FUN=function(x) paste(x,collapse=" "))
+    #return(lagm)
+  }
+  else if(length(lagm)==lagColCount) {
+    lagm<-paste(lagm,collapse=" ")
+    #return(lagm)
+    
+  }
+}
+```
+
+## Milestone processing function
+
+The following function is used to fulfill the objectives of the milestone report. The two inputs of the function define [1] the name of the file to be processed, and, [2] the fraction of lines to process on the file which is defaulted to 0.01. The random sampling of the file allows for faster processing in generating this report. Three primary outputs of the function are vectors of single words, paired words, and triple word conglomerates. Secondary outputs are the counts of each, for reference. The also function periodically wipes away large items to free up memory.  
+
+```{r}
+mileFun<-function(fileName, sampleFraction=0.01){
+  aa<-readLines("en_US.blogs.txt", encoding="UTF-8")  
+  lineCount<-length(aa) 
+  aaproc<-lapply(sample(aa,size=as.integer(lineCount*sampleFraction)),FUN=TextProcess)
+  aaproc<-aaproc[lengths(aaproc) > 0L]
+  rm(aa)
+  gc()
+  lineWordCount<-as.numeric(unlist(lapply(aaproc,FUN=length)))
+  b<-unlist(aaproc)
+  wordCount<-length(b)
+  aaproc2<-lapply(aaproc,FUN=function(x) lagMatrix(x,2))
+  b2<-unlist(aaproc2)
+  wordCount2<-length(b2)
+  rm(aaproc2)
+  gc()
+  aaproc3<-lapply(aaproc,FUN=function(x) lagMatrix(x,3))
+  b3<-unlist(aaproc3)
+  wordCount3<-length(b3)
+  rm(aaproc3)
+  gc()
+  b<-unlist(aaproc)
+  return(list(lineCount=lineCount, lineWordCount=lineWordCount, singleWord=b, wordCount=wordCount, doubleWord=b2, wordCount2=wordCount2, tripleWord=b3, wordCount3=wordCount3))
+}
+```
+
+## Blogs
+
+The blogs "en_US.blogs" file is processed first.
+
+```{r warning=FALSE}
+blogs<-mileFun("en_US.blogs.txt")
+```
+
+Based on the analysis, there are `r blogs$lineCount` lines in the file and a total of `r blogs$wordCount` individual words, there are `r blogs$wordCount2` word pairs, and lastly there are `r blogs$wordCount3` triple word combinations. The top 10 most used words, at the reduced sample, are tabularized below. 
+
+```{r echo=FALSE}
+bb<-table(blogs$singleWord)
+bb<-bb[order(-bb)]
+knitr::kable(data.frame(cbind(Frequency=as.numeric(bb)[1:10], Word=names(bb)[1:10])))
+```
+
+
+## News
+
+The news "en_US.news" file is processed second.
+
+```{r warning=FALSE}
+news<-mileFun("en_US.news.txt")
+```
+
+Based on the analysis, there are `r news$lineCount` lines in the file and a total of `r news$wordCount` individual words, there are `r news$wordCount2` word pairs, and lastly there are `r news$wordCount3` triple word combinations. The top 10 most word pairs, at the reduced sample, are tabularized below. 
+
+```{r echo=FALSE}
+bb<-table(news$doubleWord)
+bb<-bb[order(-bb)]
+knitr::kable(data.frame(cbind(Frequency=as.numeric(bb)[1:10], Word=names(bb)[1:10])))
+```
+
+
+## Twitter
+
+The Twitter "en_US.twitter" file is processed third.
+
+```{r warning=FALSE}
+twit<-mileFun("en_US.twit.txt")
+```
+
+Based on the analysis, there are `r twit$lineCount` lines in the file and a total of `r twit$wordCount` individual words, there are `r twit$wordCount2` word pairs, and lastly there are `r twit$wordCount3` triple word combinations. The top 10 most word triples, at the reduced sample, are tabularized below.
+
+```{r echo=FALSE}
+bb<-table(twit$tripleWord)
+bb<-bb[order(-bb)]
+knitr::kable(data.frame(cbind(Frequency=as.numeric(bb)[1:10], Word=names(bb)[1:10])))
+```
+
+## Comparison 
+
+```{r}
+plot(density(news$lineWordCount), col="dark grey",bty='n',axes=FALSE,xlab="Word Count", ylab="Relative Proportion of Word Count ", main = "Comparison of blogs (red), news (grey), and Twitter (blue) per line word Count", cex.main=1, ylim=c(0,0.05), xlim=c(0,200))
+lines(density(blogs$lineWordCount),col="dark red")
+lines(density(twit$lineWordCount),col="dark blue")
+axis(1, col="dark grey", family="serif")
+```
+
+
+## Conclusion
+
+The methods presented in this report are to be expanded upon based on the future requirments of the course. They demonstrate a level of ability to read, format, and perform basic exploratory analyses on the data. One initial unexpected observation from the three data sources is the sililarity of their distributions of word counts. The incoming expectation would be the Twitter source would contain the fewest words per line, followed by blogs, and then news. 
+
