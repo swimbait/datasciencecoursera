@@ -1,0 +1,195 @@
+Word Recommender: a simple approach with high flexibility in deployment
+========================================================
+author: Aaron Emmert (swimbait)
+date: 02/16/2021
+autosize: true
+
+The Situation
+========================================================
+
+The Data Science Capstone final project is a data product that encapsulates the big learning points of the specialization. This presentation documents my approach to the assignment of predicting the next word in a sequence of words, which is commonly utilized in search engines. I am putting a bit of a spin on the presentation as if I were using it as a pitch for the deployment of this data product. Accordingly, here are the points I will be touching on.
+
+- In businesses, free-form fields in applications often create disparity in the contents of records
+- By using the supplied text recommender, alignment of content can be encouraged for feature accuracy enhancement
+- Raw data, supplied from this source, is heavily processed using both standard and custaom text mining functions in R
+- The processed data form the basis for conducting a simple, but fast, recommender algorithm
+- A proof-of-concept application demonstrates this capability
+
+Initial Data Cleaning
+========================================================
+The initial data cleaning removes all non-alphabetic characters and whitespace and converts to all lower case. This cleaning is required in order to reduce output confusion and speed up the search algorithm. 
+
+Let's read in a tiny fraction of the blog data and take a look
+```{r, echo=F}
+library(tm)
+library(readr)
+#library(ggplot2)
+#library(ggQC)
+
+
+setwd("C:/Users/aemmert/Documents/Rjunk/final/en_US")
+
+TextProcess<- function(x){
+  z<-Corpus(VectorSource(x))
+  z<-tm_map(z, content_transformer(function(x) gsub(" +"," ",gsub("^ +","",gsub("[^a-zA-Z0-9 ]","",x)))))
+  z<-tm_map(z, content_transformer(tolower))
+  z<-tm_map(z, removePunctuation)
+  z<-tm_map(z, removeNumbers)
+  z<-tm_map(z, stripWhitespace)
+  z<-tm_map(z, PlainTextDocument)
+  workingr<-sapply(1:length(x), function(y) strsplit(as.character(z[[y]][[1]])," "))[[1]]
+  workingr<-workingr[workingr!=""]
+}
+lagMatrix<-function(laginputVector,lagColCount){
+  workingVector<-c(rep(NA,lagColCount-1),laginputVector)
+  lagm<-embed(workingVector,lagColCount)
+  lagm<-lagm[,ncol(lagm):1]
+  if(length(lagm)>lagColCount^2){
+    NArem<-apply(lagm,1,FUN=function(x) sum(is.na(x)))
+    lagm<-lagm[which(NArem==0),]
+    lagm<-apply(lagm,1,FUN=function(x) paste(x,collapse=" "))
+    return(lagm)
+  }
+  else if(length(lagm)==lagColCount) {
+    lagm<-paste(lagm,collapse=" ")
+    return(lagm)
+    
+  }
+}
+lagMatrix2<-function(laginputVector,lagColCount){
+  workingVector<-c(rep(NA,lagColCount-1),laginputVector)
+  if(length(workingVector)<(lagColCount)) workingVector<-c(workingVector,NA)
+  lagm<-embed(workingVector,lagColCount)
+  lagm<-lagm[,ncol(lagm):1]
+  return(lagm)
+}
+mileFun<-function(fileName, sampleFraction=0.01, ngram=4, isTrain=FALSE){
+  aa<-readLines(fileName, encoding="UTF-8")
+  exRaw<-aa[[6]]
+  exProc<-TextProcess(exRaw)
+  lineCount<-as.integer(length(aa)*sampleFraction)
+  aaproc<-lapply(sample(aa,size=lineCount),FUN=TextProcess)
+  aaproc<-aaproc[lengths(aaproc) > 0L]
+  rm(aa)
+  gc()
+  lineWordCount<-as.numeric(unlist(lapply(aaproc,FUN=length)))
+  b<-unlist(aaproc)
+  wordCount<-length(b)
+  aaproc2<-lapply(aaproc,FUN=function(x) lagMatrix2(x,ngram+as.numeric(isTrain)))
+  aaproc2<-do.call("rbind", aaproc2)
+  wordCount3<-nrow(aaproc2)
+  features<-aaproc2[,1:ngram]
+  ifelse(isTrain, response<-aaproc2[,(ngram+1)],response<-NA)
+  return(list(exRaw=exRaw, exProc=exProc, lineCount=lineCount, lineWordCount=lineWordCount, wordCount=wordCount, wordCount3=wordCount3, features=features,response=response))
+}
+```
+
+```{r}
+lineData<-mileFun(fileName="en_US.blogs.txt",sampleFraction=0.001,isTrain=TRUE)
+```
+
+An example, raw line 6, from this file looks like this: `r lineData$exRaw`
+While the cleaned version looks like this: `r paste(lineData$exProc,collapse = " ")`
+
+Here is a breakdown of the count of words for the sample data
+```{r}
+quantile(lineData$lineWordCount)
+```
+
+Creating N-Gram Matrices
+========================================================
+The cleansed data are then passed through a lag matrix function. Using the previous example, here is the lag matrix that gets generated using a 5-gram me.
+
+```{r}
+exampleLag<-lagMatrix2(lineData$exProc, 5)
+exampleLag<-exampleLag[which(apply(exampleLag,1,FUN=function(x) sum(is.na(x)))==0),]
+```
+
+Using the previous example, here is the lag matrix that gets generated using a 5-gram method.
+```{r, echo=F}
+knitr::kable(data.frame(exampleLag))
+```
+
+The n-gramming results in a matrix of ~69 million rows by 5 columns. This is too large to effectively search, so n-grams are removed that occur in 4 or fewer instances. The result is a ~1.8 million row matrix, a 97% reduction.
+
+Next Word Prediction
+========================================================
+The key to the speed of this approach is a manageable n-gram search matrix. When the input string is passed in, the last 4 words of it are searched in the n-gram matrix, and if matches are found, the winner is decided by the most frequently occurring last word. If no matches are found, the last 3 words are searched, and so-on until 1-word. Words that are not matched at all create a warning. 
+
+```{r, include = F}
+combGrams<-read_csv("combGrams.csv")
+dictionary<-read_csv("dictionary.csv")
+combGrams<-matrix(dictionary$number[match(unlist(combGrams), dictionary$word)],ncol=ncol(combGrams))
+searchCG<-function(combGrams=combGrams,wordVector){
+    boWordVector<-wordVector
+    returnGrams<-combGrams[0,]
+    while(length(boWordVector)>0 & nrow(returnGrams)==0){
+        dumpVector<-boWordVector
+        returnGrams<-combGrams
+        ct<-1
+        while(length(dumpVector)>0 & nrow(returnGrams)>0){
+            workingWord<-dumpVector[1]
+            returnGrams<-matrix(returnGrams[which(returnGrams[,ct]==workingWord),],ncol=5)
+            ct<-ct+1
+            dumpVector<-dumpVector[-1]
+        }
+        boWordVector<-boWordVector[-1]
+    }
+    wordVector<-wordVector[c(1:(length(boWordVector)+1))]
+    returnGrams<-returnGrams[,c(1:(length(wordVector)+1))]
+    return(list(wordCount=length(wordVector),returnGrams=returnGrams))
+}
+wordSweep<-function(dictionary,wordVector,numToWord=FALSE){
+    if(numToWord){
+        subdict<-dictionary[which(dictionary$number %in% wordVector),]
+        subdict<-subdict[match(wordVector,subdict$number),]
+        return(subdict$word)
+    } else {
+        subdict<-dictionary[which(dictionary$word %in% wordVector),]
+        subdict<-subdict[match(wordVector,subdict$word),]
+        return(subdict$number)
+    }
+}
+selectBest<-function(returnGrams,wordCountP1){
+    uniGrams<-data.frame(unique(returnGrams[,c(1:(wordCountP1))]))
+    colnames(uniGrams)[wordCountP1]<-"ytgt"
+    lastWord<-table(returnGrams[,wordCountP1])
+    lastWord<-round(lastWord/sum(lastWord),2)
+    lastWord<-lastWord[order(-lastWord)[c(1:min(c(length(lastWord),3)))]]
+    lastPct<-data.frame(cbind(zprob=lastWord,ytgt=names(lastWord)))
+    uniGrams<-merge(uniGrams,lastPct,by="ytgt",all.x = F)
+    uniGrams<-uniGrams[order(-as.numeric(uniGrams$zprob)),order(colnames(uniGrams))]
+    uniGrams<-list(uniGrams=uniGrams[,1:(ncol(uniGrams)-1)], zprob=uniGrams[ncol(uniGrams)])
+    return(uniGrams)
+}
+prepRender<-function(workTxt,dictionary){
+    lenTxt<-length(workTxt)
+    if(lenTxt>4) workTxt<-workTxt[c(lenTxt-3):lenTxt]
+    matchNext<-searchCG(combGrams,wordSweep(dictionary,workTxt))
+    if(nrow(matchNext$returnGrams)>0){
+        selB<-selectBest(matchNext$returnGrams, matchNext$wordCount+1)
+        convBack<-t(apply(selB$uniGrams, 1, function(x) wordSweep(dictionary,x,numToWord=TRUE)))
+        outTable<-cbind(convBack,selB$zprob)
+        colnames(outTable)[1:(ncol(outTable)-2)]<-""
+        colnames(outTable)[(ncol(outTable)-1)]<-"Predicted"
+    } else {
+        outTable<-"no matches, try removing one or more uncommon words"
+    }
+    return(outTable)
+}
+```
+
+Here is an extension of our previous example
+
+```{r}
+workingText<-TextProcess("If you have an")
+wordRecom<-prepRender(workingText,dictionary)
+```
+
+Where the next word recommended is "iphone" with a 0.38 probability. 
+
+```{r, echo=F}
+knitr::kable(data.frame(wordRecom))
+```
+
+An R Shiny application is available giving a live demonstration of the algorithm at work.
