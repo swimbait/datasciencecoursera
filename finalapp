@@ -1,0 +1,141 @@
+
+library(shiny)
+library(shinythemes)
+library(tm)
+library(readr)
+
+###Server data prep###
+setwd("/final/en_US")
+combGrams<-read_csv("combGrams.csv")
+dictionary<-read_csv("dictionary.csv")
+combGrams<-matrix(dictionary$number[match(unlist(combGrams), dictionary$word)],ncol=ncol(combGrams))
+
+######################
+###Server functions###
+######################
+
+TextProcess<- function(x){
+    z<-Corpus(VectorSource(x))
+    z<-tm_map(z, content_transformer(function(x) gsub(" +"," ",gsub("^ +","",gsub("[^a-zA-Z0-9 ]","",x)))))
+    z<-tm_map(z, content_transformer(tolower))
+    z<-tm_map(z, removePunctuation)
+    z<-tm_map(z, removeNumbers)
+    z<-tm_map(z, stripWhitespace)
+    z<-tm_map(z, PlainTextDocument)
+    workingr<-sapply(1:length(x), function(y) strsplit(as.character(z[[y]][[1]])," "))[[1]]
+    workingr<-workingr[workingr!=""]
+}
+searchCG<-function(combGrams=combGrams,wordVector){
+    boWordVector<-wordVector
+    returnGrams<-combGrams[0,]
+    while(length(boWordVector)>0 & nrow(returnGrams)==0){
+        dumpVector<-boWordVector
+        returnGrams<-combGrams
+        ct<-1
+        while(length(dumpVector)>0 & nrow(returnGrams)>0){
+            workingWord<-dumpVector[1]
+            returnGrams<-matrix(returnGrams[which(returnGrams[,ct]==workingWord),],ncol=5)
+            ct<-ct+1
+            dumpVector<-dumpVector[-1]
+        }
+        boWordVector<-boWordVector[-1]
+    }
+    wordVector<-wordVector[c(1:(length(boWordVector)+1))]
+    returnGrams<-returnGrams[,c(1:(length(wordVector)+1))]
+    return(list(wordCount=length(wordVector),returnGrams=returnGrams))
+}
+wordSweep<-function(dictionary,wordVector,numToWord=FALSE){
+    if(numToWord){
+        subdict<-dictionary[which(dictionary$number %in% wordVector),]
+        subdict<-subdict[match(wordVector,subdict$number),]
+        return(subdict$word)
+    } else {
+        subdict<-dictionary[which(dictionary$word %in% wordVector),]
+        subdict<-subdict[match(wordVector,subdict$word),]
+        return(subdict$number)
+    }
+}
+selectBest<-function(returnGrams,wordCountP1){
+    uniGrams<-data.frame(unique(returnGrams[,c(1:(wordCountP1))]))
+    colnames(uniGrams)[wordCountP1]<-"ytgt"
+    lastWord<-table(returnGrams[,wordCountP1])
+    lastWord<-round(lastWord/sum(lastWord),2)
+    lastWord<-lastWord[order(-lastWord)[c(1:min(c(length(lastWord),5)))]]
+    lastPct<-data.frame(cbind(zprob=lastWord,ytgt=names(lastWord)))
+    uniGrams<-merge(uniGrams,lastPct,by="ytgt",all.x = F)
+    uniGrams<-uniGrams[order(-as.numeric(uniGrams$zprob)),order(colnames(uniGrams))]
+    uniGrams<-list(uniGrams=uniGrams[,1:(ncol(uniGrams)-1)], zprob=uniGrams[ncol(uniGrams)])
+    return(uniGrams)
+}
+prepRender<-function(workTxt,dictionary){
+    lenTxt<-length(workTxt)
+    if(lenTxt>4) workTxt<-workTxt[c(lenTxt-3):lenTxt]
+    matchNext<-searchCG(combGrams,wordSweep(dictionary,workTxt))
+    if(nrow(matchNext$returnGrams)>0){
+        selB<-selectBest(matchNext$returnGrams, matchNext$wordCount+1)
+        convBack<-t(apply(selB$uniGrams, 1, function(x) wordSweep(dictionary,x,numToWord=TRUE)))
+        outTable<-cbind(convBack,selB$zprob)
+        colnames(outTable)[1:(ncol(outTable)-2)]<-""
+        colnames(outTable)[(ncol(outTable)-1)]<-"Predicted"
+    } else {
+        outTable<-"no matches, try removing one or more uncommon words"
+    }
+    return(outTable)
+}
+
+########
+###UI###
+########
+
+ui <- fluidPage(
+    theme = shinytheme("journal"),
+    titlePanel("Simple Word Recommender"),
+    h4("This application is one of the deliverables for the final project for the data science capstone course. It is a word recommender"),
+    tabsetPanel(
+        id = "wizard",
+        type = "pills",
+        tabPanel("Simple word recommender", 
+            br(),
+            "In the box below, begin typing out a sentence, a one-second pause in the typing 
+                triggers the word recommender, which renders its output on the right side of the panel",
+            fluidRow(
+                column(width = 6,
+                    textInput("inputText", "", "I want to"),
+                    #br(),
+                    #textOutput("procInput")
+                ),
+                column(width = 6,
+                    tableOutput("wordRecom")
+                )
+            ),
+            fluidRow(
+                column(width = 12,
+                    h4("Methodology"),
+                    "The text inputted is formatted by removing anything except alphabetic characters, removing whitespace, and converting 
+                    to all lower case. Behind-the-scenes, a numeric 5-gram matrix and its corresponding conversion dictionary is read into
+                    the environment which is the result of a separate data mining script using the Blogs, News, and Twitter file. The 
+                    formatted input string is then iteratively subsetted for matching words using the maximum available. If no suitable
+                    match is found, the input string backs-off the length and repeats until matches are found. The output table contains up 
+                    to five of the most likely matches with the zprob column representing the descriptive statistic on the proportion that
+                    match takes up in the subsetted match list. If an uncommon word exists in the input, it may cause no matches to be found."
+                )
+            )
+        )
+    )
+)
+
+
+############
+###Server###
+############
+
+
+server <- function(input, output) {
+    workingText<-reactive(TextProcess(input$inputText))
+    output$wordRecom<-renderTable(prepRender(workingText(),dictionary))
+    output$procInput<-renderText(paste(workingText(),collapse=" "))
+    
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
