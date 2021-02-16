@@ -1,0 +1,581 @@
+
+library(tm)
+library(readr)
+#library(ggplot2)
+#library(ggQC)
+
+
+setwd("C:/Users/aemmert/Documents/Rjunk/final/en_US")
+
+TextProcess<- function(x){
+  z<-Corpus(VectorSource(x))
+  z<-tm_map(z, content_transformer(function(x) gsub(" +"," ",gsub("^ +","",gsub("[^a-zA-Z0-9 ]","",x)))))
+  z<-tm_map(z, content_transformer(tolower))
+  z<-tm_map(z, removePunctuation)
+  z<-tm_map(z, removeNumbers)
+  z<-tm_map(z, stripWhitespace)
+  z<-tm_map(z, PlainTextDocument)
+  workingr<-sapply(1:length(x), function(y) strsplit(as.character(z[[y]][[1]])," "))[[1]]
+  workingr<-workingr[workingr!=""]
+}
+lagMatrix<-function(laginputVector,lagColCount){
+  workingVector<-c(rep(NA,lagColCount-1),laginputVector)
+  lagm<-embed(workingVector,lagColCount)
+  lagm<-lagm[,ncol(lagm):1]
+  if(length(lagm)>lagColCount^2){
+    NArem<-apply(lagm,1,FUN=function(x) sum(is.na(x)))
+    lagm<-lagm[which(NArem==0),]
+    lagm<-apply(lagm,1,FUN=function(x) paste(x,collapse=" "))
+    return(lagm)
+  }
+  else if(length(lagm)==lagColCount) {
+    lagm<-paste(lagm,collapse=" ")
+    return(lagm)
+    
+  }
+}
+lagMatrix2<-function(laginputVector,lagColCount){
+  workingVector<-c(rep(NA,lagColCount-1),laginputVector)
+  if(length(workingVector)<(lagColCount)) workingVector<-c(workingVector,NA)
+  lagm<-embed(workingVector,lagColCount)
+  lagm<-lagm[,ncol(lagm):1]
+  return(lagm)
+}
+mileFun<-function(fileName, sampleFraction=0.01, ngram=4, isTrain=FALSE){
+  aa<-readLines(fileName, encoding="UTF-8")
+  exRaw<-aa[[2]]
+  exProc<-TextProcess(exRaw)
+  lineCount<-as.integer(length(aa)*sampleFraction)
+  aaproc<-lapply(sample(aa,size=lineCount),FUN=TextProcess)
+  aaproc<-aaproc[lengths(aaproc) > 0L]
+  rm(aa)
+  gc()
+  lineWordCount<-as.numeric(unlist(lapply(aaproc,FUN=length)))
+  b<-unlist(aaproc)
+  wordCount<-length(b)
+  aaproc2<-lapply(aaproc,FUN=function(x) lagMatrix2(x,ngram+as.numeric(isTrain)))
+  aaproc2<-do.call("rbind", aaproc2)
+  wordCount3<-nrow(aaproc2)
+  features<-aaproc2[,1:ngram]
+  ifelse(isTrain, response<-aaproc2[,(ngram+1)],response<-NA)
+  return(list(exRaw=exRaw, exProc=exProc, lineCount=lineCount, lineWordCount=lineWordCount, wordCount=wordCount, wordCount3=wordCount3, features=features,response=response))
+}
+
+##################################
+###read and create n-gram files###
+##################################
+###blogs###
+lineData<-mileFun(fileName="en_US.blogs.txt",sampleFraction=0.001,isTrain=TRUE)
+lineData$features[is.na(lineData$features)]<-"NWE999"
+trainFrame<-data.frame(cbind(features=lineData$features, response=lineData$response),stringsAsFactors = TRUE)
+write_csv(trainFrame,"trainFrameBlogs.csv")
+rm(lineData)
+rm(trainFrame)
+gc()
+
+###news###
+lineData<-mileFun(fileName="en_US.news.txt",sampleFraction=1,isTrain=TRUE)
+lineData$features[is.na(lineData$features)]<-"NWE999"
+trainFrame<-data.frame(cbind(features=lineData$features, response=lineData$response),stringsAsFactors = TRUE)
+write_csv(trainFrame,"trainFrameNews.csv")
+rm(lineData)
+rm(trainFrame)
+gc()
+
+###twitter
+lineData<-mileFun(fileName="en_US.twitter.txt",sampleFraction=1,isTrain=TRUE)
+lineData$features[is.na(lineData$features)]<-"NWE999"
+trainFrame<-data.frame(cbind(features=lineData$features, response=lineData$response),stringsAsFactors = TRUE)
+write_csv(trainFrame,"trainFrameTwitter.csv")
+rm(lineData)
+rm(trainFrame)
+gc()
+
+
+##########################################
+###Reduce the row count in n-gram files###
+##########################################
+nBlogs<-read_csv("trainFrameBlogs.csv")
+#write_csv(nBlogs[1:18400000,],"trainFrameBlogs.csv")
+#write_csv(nBlogs[18400001:nrow(nBlogs),],"trainFrameBlogs2.csv")
+nBlogs$compKey<-apply(nBlogs, 1, FUN=function(x) paste(x,collapse=""))
+nBlogs$compKey<-as.numeric(as.factor(nBlogs$compKey))
+keyCount<-tapply(nBlogs$compKey,nBlogs$compKey,FUN=length)
+removeKeys<-names(keyCount[which(keyCount==1)])
+nBlogs<-nBlogs[-which(nBlogs$compKey %in% removeKeys),]
+write_csv(nBlogs,"nBlogs.csv")
+
+nBlogs<-read_csv("trainFrameBlogs2.csv")
+nBlogs$compKey<-apply(nBlogs, 1, FUN=function(x) paste(x,collapse=""))
+keyCount<-tapply(nBlogs$compKey,nBlogs$compKey,FUN=length)
+removeKeys<-names(keyCount[which(keyCount==1)])
+nBlogs<-nBlogs[-which(nBlogs$compKey %in% removeKeys),]
+write_csv(nBlogs,"nBlogs2.csv")
+
+nNews<-read_csv("trainFrameNews.csv")
+nNews$compKey<-apply(nNews, 1, FUN=function(x) paste(x,collapse=""))
+keyCount<-tapply(nNews$compKey,nNews$compKey,FUN=length)
+removeKeys<-names(keyCount[which(keyCount==1)])
+nNews<-nNews[-which(nNews$compKey %in% removeKeys),]
+write_csv(nNews,"nNews.csv")
+
+nTwit<-read_csv("trainFrameTwitter.csv")
+nTwit$compKey<-apply(nTwit, 1, FUN=function(x) paste(x,collapse=""))
+keyCount<-tapply(nTwit$compKey,nTwit$compKey,FUN=length)
+removeKeys<-names(keyCount[which(keyCount==1)])
+nTwit<-nTwit[-which(nTwit$compKey %in% removeKeys),]
+write_csv(nTwit,"nTwit.csv")
+
+nBlogs<-read_csv("nBlogs.csv")
+nBlogs2<-read_csv("nBlogs2.csv")
+nNews<-read_csv("nNews.csv")
+nTwit<-read_csv("nTwit.csv")
+
+combGrams<-rbind(nBlogs, nBlogs2, nNews, nTwit)
+rm(nBlogs)
+rm(nBlogs2)
+rm(nNews)
+rm(nTwit)
+gc()
+keyCount<-tapply(combGrams$compKey,combGrams$compKey,FUN=length)
+keyCount<-keyCount[order(-keyCount)]
+quantile(keyCount)
+removeKeys<-names(keyCount[which(keyCount<=4)])
+combGrams<-combGrams[-which(combGrams$compKey %in% removeKeys),-which(colnames(combGrams)=="compKey")]
+as<-rowSums(combGrams=="NWE999")>0
+combGrams<-combGrams[!as,]
+write_csv(combGrams,"combGrams.csv")
+
+
+####################################
+###Create subset of the combGrams###
+####################################
+searchCG<-function(combGrams=combGrams,wordVector){
+  boWordVector<-wordVector
+  returnGrams<-combGrams[0,]
+  while(length(boWordVector)>0 & nrow(returnGrams)==0){
+    dumpVector<-boWordVector
+    returnGrams<-combGrams
+    ct<-1
+    while(length(dumpVector)>0 & nrow(returnGrams)>0){
+      workingWord<-dumpVector[1]
+      returnGrams<-matrix(returnGrams[which(returnGrams[,ct]==workingWord),],ncol=5)
+      ct<-ct+1
+      dumpVector<-dumpVector[-1]
+    }
+    boWordVector<-boWordVector[-1]
+  }
+  wordVector<-wordVector[c(1:(length(boWordVector)+1))]
+  returnGrams<-returnGrams[,c(1:(length(wordVector)+1))]
+  return(list(wordCount=length(wordVector),returnGrams=returnGrams))
+}
+wordSweep<-function(dictionary,wordVector,numToWord=FALSE){
+  if(numToWord){
+    subdict<-dictionary[which(dictionary$number %in% wordVector),]
+    subdict<-subdict[match(wordVector,subdict$number),]
+    return(subdict$word)
+  } else {
+    subdict<-dictionary[which(dictionary$word %in% wordVector),]
+    subdict<-subdict[match(wordVector,subdict$word),]
+    return(subdict$number)
+  }
+}
+selectBest<-function(returnGrams,wordCountP1){
+  uniGrams<-data.frame(unique(returnGrams[,c(1:(wordCountP1))]))
+  colnames(uniGrams)[wordCountP1]<-"ytgt"
+  lastWord<-table(returnGrams[,wordCountP1])
+  lastWord<-round(lastWord/sum(lastWord),2)
+  lastWord<-lastWord[order(-lastWord)[c(1:min(c(length(lastWord),5)))]]
+  lastPct<-data.frame(cbind(zprob=lastWord,ytgt=names(lastWord)))
+  uniGrams<-merge(uniGrams,lastPct,by="ytgt",all.x = F)
+  uniGrams<-uniGrams[order(-as.numeric(uniGrams$zprob)),order(colnames(uniGrams))]
+  uniGrams<-list(uniGrams=uniGrams[,1:(ncol(uniGrams)-1)], zprob=uniGrams[ncol(uniGrams)])
+  return(uniGrams)
+}
+prepRender<-function(workTxt,dictionary){
+  lenTxt<-length(workTxt)
+  if(lenTxt>4) workTxt<-workTxt[c(lenTxt-3):lenTxt]
+  matchNext<-searchCG(combGrams,wordSweep(dictionary,workTxt))
+  if(nrow(matchNext$returnGrams)>0){
+    selB<-selectBest(matchNext$returnGrams, matchNext$wordCount+1)
+    convBack<-t(apply(selB$uniGrams, 1, function(x) wordSweep(dictionary,x,numToWord=TRUE)))
+    outTable<-cbind(convBack,selB$zprob)
+    colnames(outTable)[1:(ncol(outTable)-2)]<-""
+    colnames(outTable)[(ncol(outTable)-1)]<-"Predicted"
+  } else {
+    outTable<-"no matches, try removing one or more uncommon words"
+  }
+  return(outTable)
+}
+
+combGrams<-read_csv("combGrams.csv")
+featureWords<-unlist(combGrams)
+featureWords<-unique(featureWords)
+dictionary<-data.frame(cbind(word=as.character(featureWords),number=as.numeric(as.factor(featureWords))))
+dictionary$number<-as.numeric(dictionary$number)
+write_csv(dictionary,"dictionary.csv")
+combGrams<-matrix(dictionary$number[match(unlist(combGrams), dictionary$word)],ncol=ncol(combGrams))
+
+searchCG(combGrams,wordSweep(dictionary,c("i","did","not","expect")))
+searchCG(combGrams,wordSweep(dictionary,c("i","am")))
+searchCG(combGrams,wordSweep(dictionary,c("are","you")))
+
+####################################
+###Select best matching next word###
+####################################
+
+ex1<-searchCG(combGrams,wordSweep(dictionary,c("i","did","not","expect")))
+ex1<-searchCG(combGrams,wordSweep(dictionary,c("i","did","not")))
+ex1<-searchCG(combGrams,wordSweep(dictionary,c("i","did")))
+ex1<-searchCG(combGrams,wordSweep(dictionary,"i"))
+returnGrams<-ex1$returnGrams
+wordCountP1<-ex1$wordCount+1
+ex1<-selectBest(returnGrams, wordCountP1)
+wordSweep(dictionary,c(4416,2474,6096,3147,9180),numToWord=TRUE)
+wordSweep(dictionary,c(4416,2474,6096),numToWord=TRUE)
+wordSweep(dictionary,as.vector(as.matrix(ex1[1,c(1:which(colnames(ex1)=="ytgt"))])),numToWord=TRUE)
+
+##pick up here
+
+
+
+
+
+trainFrame[which(trainFrame[,1]==795),]
+
+
+combGrams<-data.frame(lapply(combGrams,as.factor))
+combGrams<-data.frame(lapply(combGrams,as.numeric))
+trainFrame<-data.frame(lapply(trainFrame,as.factor))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+trainFrame<-trainFrame[1:1000,]
+trainFrame[1:100,]
+
+featureWords<-unlist(trainFrame)
+featureWords<-unique(featureWords)
+length(featureWords)
+dictionary<-data.frame(cbind(word=as.character(featureWords),number=as.numeric(featureWords)))
+trainFrame<-data.frame(lapply(trainFrame,as.numeric))
+trainFrame<-data.frame(lapply(trainFrame,as.factor))
+
+
+rm(blogs)
+rm(featureWords)
+rm(trainFrame)
+gc()
+
+
+
+library(xgboost)
+
+
+train_index <- sample(1:nrow(trainFrame), nrow(trainFrame)*0.75)
+data_variables <- as.matrix(trainFrame[,-4])
+data_label <- trainFrame[train_index,4]
+data_matrix <- xgb.DMatrix(data = data_variables, label = data_label)
+# split train data and make xgb.DMatrix
+train_data   <- as.matrix(trainFrame[train_index,-4])
+train_label  <- trainFrame[train_index,4]
+train_matrix <- xgb.DMatrix(data = train_data, label = train_label)
+# split test data and make xgb.DMatrix
+test_data  <- as.matrix(trainFrame[-train_index,-4])
+test_label <- trainFrame[-train_index,4]
+test_matrix <- xgb.DMatrix(data = test_data, label = test_label)
+
+
+
+
+numberOfClasses <- length(unique(train_label))
+xgb_params <- list("objective" = "multi:softprob",
+                   "eval_metric" = "mlogloss",
+                   "num_class" = numberOfClasses)
+nround    <- 50 # number of XGBoost rounds
+cv.nfold  <- 5
+
+# Fit cv.nfold * cv.nround XGB models and save OOF predictions
+cv_model <- xgb.cv(params = xgb_params,
+                   data = train_matrix, 
+                   nrounds = nround,
+                   nfold = cv.nfold,
+                   verbose = FALSE,
+                   prediction = TRUE)
+
+
+OOF_prediction <- data.frame(cv_model$pred) %>%
+  mutate(max_prob = max.col(., ties.method = "last"),
+         label = train_label + 1)
+head(OOF_prediction)
+
+confusionMatrix(factor(OOF_prediction$max_prob),
+                factor(OOF_prediction$label),
+                mode = "everything")
+
+bst_model <- xgb.train(params = xgb_params,
+                       data = train_matrix,
+                       nrounds = nround)
+
+# Predict hold-out test set
+test_pred <- predict(bst_model, newdata = test_matrix)
+test_prediction <- matrix(test_pred, nrow = numberOfClasses,
+                          ncol=length(test_pred)/numberOfClasses) %>%
+  t() %>%
+  data.frame() %>%
+  mutate(label = test_label + 1,
+         max_prob = max.col(., "last"))
+# confusion matrix of test set
+confusionMatrix(factor(test_prediction$max_prob),
+                factor(test_prediction$label),
+                mode = "everything")
+
+
+
+
+
+
+
+
+
+
+
+
+library(e1071)
+
+testFrame<-trainFrame[300001:300100,]
+trainFrame<-trainFrame[1:150000,]
+
+model <- naiveBayes(as.matrix(trainFrame[,1:3]),trainFrame$response)
+
+results <- predict(model,as.matrix(testFrame[,1:3]))
+cbind(results, testFrame[,4])
+
+
+
+
+
+
+
+library(bnlearn)
+library(DAAG)
+library(visNetwork)
+data(ais)
+library(ggplot2)
+
+ais$high_hc <- as.factor(ais$hc > median(ais$hc))
+ais$high_hg <- as.factor(ais$hg > median(ais$hg))
+structure <- empty.graph(c("high_hc", "high_hg", "sport"))
+modelstring(structure) <- "[high_hc][sport][high_hg|sport:high_hc]"
+plot.network <- function(structure, ht = "400px"){
+  nodes.uniq <- unique(c(structure$arcs[,1], structure$arcs[,2]))
+  nodes <- data.frame(id = nodes.uniq,
+                      label = nodes.uniq,
+                      color = "darkturquoise",
+                      shadow = TRUE)
+  edges <- data.frame(from = structure$arcs[,1],
+                      to = structure$arcs[,2],
+                      arrows = "to",
+                      smooth = TRUE,
+                      shadow = TRUE,
+                      color = "black")
+  return(visNetwork(nodes, edges, height = ht, width = "100%"))
+}
+# observe structure
+plot.network(structure)
+
+
+ais.sub <- ais[ais$sport %in% c("Netball", "Tennis", "W_Polo"), c("high_hc", "high_hg", "sport")]
+ais.sub$sport <- factor(ais.sub$sport)
+bn.mod <- bn.fit(structure, data = ais.sub)
+bn.mod
+
+
+cat("P(high hemaglobin levels) =", cpquery(bn.mod, (high_hg=="TRUE"), TRUE), "\n")
+
+
+
+
+structure <- empty.graph(c("hc", "hg", "sport"))
+# set relationships manually
+modelstring(structure) <- "[hc][sport][hg|sport:hc]"
+# subset and fit
+ais.sub <- ais[ais$sport %in% c("Netball", "Tennis", "W_Polo"), c("hc", "hg", "sport")]
+ais.sub$sport <- factor(ais.sub$sport)
+bn.mod <- bn.fit(structure, data = ais.sub)
+bn.mod
+
+
+
+structure <- empty.graph(c("hc", "hg", "sport", "lbm"))
+structure <- empty.graph(c("V1", "V2", "V3", "response"))
+# set relationships manually
+modelstring(structure) <- "[V1][V2|V1][V3|V2][response|V3]"
+plot.network(structure)
+# subset and fit
+ais.sub <- ais[ais$sport %in% c("Netball", "Tennis", "W_Polo"), c("hc", "hg", "sport", "lbm")]
+ais.sub$sport <- factor(ais.sub$sport)
+bn.mod <- bn.fit(structure, data = ais.sub)
+bn.mod <- bn.fit(structure, data = trainFrame)
+bn.mod
+
+newdata <- trainFrame
+a<-predict(bn.mod,node="response", data=newdata)
+b<-trainFrame$response
+sum(b==a)
+
+cat("P(hemaglobin levels > 14 | play water polo and have LBM > 65 kg) =", cpquery(bn.mod, (hg > 14), (sport == "W_Polo" & lbm > 65 )), "\n")
+cpquery(bn.mod, (response == 25869), (V1 == 676 & V2 == 26421 & V3 == 16561 ))
+cpquery(bn.mod, (response == 27348), (V1 == 17537 & V2 == 17796 & V3 == 18136 ))
+
+
+
+#res <- hc(trainFrame)
+
+
+
+dag <- empty.graph(nodes = c("A","S","E","O","R","T"))
+arc.set <- matrix(c("A", "E",
+                    "S", "E",
+                    "E", "O",
+                    "E", "R",
+                    "O", "T",
+                    "R", "T"),
+                  byrow = TRUE, ncol = 2,
+                  dimnames = list(NULL, c("from", "to")))
+arcs(dag) <- arc.set
+nodes(dag)
+arcs(dag)
+
+
+bn.mle <- bn.fit(dag, data = survey, method = "mle")
+
+
+
+training = bn.fit(model2network("[A][B][E][G][C|A:B][D|B][F|A:D:E:G]"),
+                  gaussian.test[1:2000, ])
+test = gaussian.test[2001:nrow(gaussian.test), ]
+predicted <- predict(training, node = "A", data = test, method = "bayes-lw")
+head(predicted)
+
+
+training = bn.fit(model2network("[V2][V3][response|V2:V3]"),
+                  trainFrame[1:2000,(2:4)])
+test = gaussian.test[2001:nrow(gaussian.test), ]
+predicted <- predict(training, node = "A", data = test, method = "bayes-lw")
+head(predicted)
+
+
+
+for(i in 1:length(aaproc)){
+  lagMatrix2(aaproc[[i]],3)
+}
+
+
+
+
+
+
+
+
+  b<-table(b)
+b<-b[order(-b)]
+Frequency<-as.numeric(b)[1:25]
+Word <- names(b)[1:25]
+wordPareto<-data.frame(Word = Word,Frequency = Frequency) 
+plot(Frequency,col="white",bty='n',axes=FALSE,xlab="Descending Order Position")
+axis(1, col="dark grey", family="serif")
+axis(2, col="dark grey",  family="serif")
+text(Frequency,labels=Word,cex=0.7)
+
+aa<-readLines("en_US.blogs.txt")
+
+
+
+
+
+
+
+
+rm(aaproc)
+rm(b)
+gc()
+
+
+
+asub<-aa[runif(length(aa),0,1)<0.01]
+
+
+aa<-readLines("en_US.blogs.txt", 15)
+aa<-readLines("en_US.blogs.txt", encoding="UTF-8")
+bb<-readLines("en_US.twitter.txt")
+cc<-readLines("en_US.news.txt")
+
+
+
+b<-nchar(cc)
+
+max(b)
+
+asub<-aa[runif(length(aa),0,1)<0.01]
+length(asub)
+
+asub[1]
+a<-TextProcess(asub[1])
+a<-lapply(asub[1:8000],FUN=TextProcess)
+
+b<-unlist(a)
+b<-table(b)
+b<-b[order(-b)]
+
+
+rm(aa)
+gc()
+
+
+set.seed(999)
+aac<-sample(aa,size=as.integer(lineCount*0.001))
+
+for(i in 1:length(aaproc)){
+  lagMatrix(aaproc[[i]],2)
+}
+
+
+
+mileFun<-function(fileName, sampleFraction=0.001){
+  aa<-readLines("en_US.blogs.txt", encoding="UTF-8")  
+  lineCount<-length(aa) 
+  
+  aaproc<-lapply(aac,FUN=TextProcess)
+  aaproc<-aaproc[lengths(aaproc) > 0L]
+  rm(aa)
+  gc()
+  b<-unlist(aaproc)
+  wordCount<-length(b)
+  aaproc2<-lapply(aaproc,FUN=function(x) lagMatrix(x,2))
+  b2<-unlist(aaproc2)
+  wordCount2<-length(b2)
+  rm(aaproc2)
+  gc()
+  aaproc3<-lapply(aaproc,FUN=function(x) lagMatrix(x,3))
+  b3<-unlist(aaproc3)
+  wordCount3<-length(b3)
+  rm(aaproc3)
+  gc()
+  b<-unlist(aaproc)
+  return(list(lineCount=lineCount, singleWord=b, wordCount=wordCount, doubleWord=b2, wordCount2=wordCount2, tripleWord=b3, wordCount3=wordCount3))
+}
+
+blogs<-mileFun("en_US.blogs.txt")
